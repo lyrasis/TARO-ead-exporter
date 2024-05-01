@@ -314,6 +314,17 @@ class EADSerializer < ASpaceExport::Serializer
     end
   end
 
+  def serialize_dates(obj, xml, fragments)
+    obj.archdesc_dates.each do |node_data|
+      next if node_data["publish"] === false && !@include_unpublished
+      audatt = node_data["publish"] === false ? {:audience => 'internal'} : {}
+      encatt = node_data["type"] === 'bulk' ? {:encodinganalog => '245$g'} : {:encodinganalog => '245$f'}
+      xml.unitdate(node_data[:atts].merge(audatt), encatt) {
+        sanitize_mixed_content( node_data[:content], xml, fragments )
+      }
+    end
+  end
+
   def serialize_did_notes(data, xml, fragments)
     data.notes.each do |note|
       next if note["publish"] === false && !@include_unpublished
