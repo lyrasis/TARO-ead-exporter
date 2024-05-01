@@ -182,22 +182,42 @@ class EADSerializer < ASpaceExport::Serializer
       xml.controlaccess {
         xml.head { xml.text "Index Terms" }
         if data.controlaccess_linked_agents(@include_unpublished).reject {|x| x.empty?}.length > 0
-          agent_types = ["persname", "corpname", "famname"]
-          agent_types.each { |type| data.controlaccess_linked_agents(@include_unpublished).zip(data.linked_agents).select!{|node_data, agent| node_data[:node_name].to_s == type}.each do |node_data, agent|
-              next if node_data.empty?
-              xml.send(node_data[:node_name], node_data[:atts]) {
-                sanitize_mixed_content( node_data[:content], xml, fragments, ASpaceExport::Utils.include_p?(node_data[:node_name]) )
-                EADSerializer.run_serialize_step(agent['_resolved'], xml, fragments, node_data[:node_name].to_sym)
-              }
-            end
+          agent_types = {"persname" => "Subjects (Persons)", "corpname" => "Subjects (Organizations)", "famname" => "Subjects (Families)"}
+          agent_types.keys.each { |type| working_agents = data.controlaccess_linked_agents(@include_unpublished).zip(data.linked_agents).select{|node_data, agent| node_data[:node_name].to_s == type}
+          if working_agents.length > 0
+            xml.controlaccess { 
+              xml.head { xml.text agent_types[type] }
+              working_agents.each do |node_data, agent|
+                xml.send(node_data[:node_name], node_data[:atts]) {
+                  sanitize_mixed_content( node_data[:content], xml, fragments, ASpaceExport::Utils.include_p?(node_data[:node_name]) )
+                  EADSerializer.run_serialize_step(agent['_resolved'], xml, fragments, node_data[:node_name].to_sym)
+                }
+              end
+            }
+          end
+        }
+        if data.controlaccess_subjects.length > 0
+          subject_types = {"subject" => "Subjects", 
+                          "geogname" => "Places", 
+                          "genreform" => "Document Types",
+                          "occupation" => "Occupations",
+                          "function" => "Functions", 
+                          "title" => "Uniform Titles"}
+          subject_types.keys.each {|type| working_subjects = data.controlaccess_subjects.zip(data.subjects).select{ |node_data, subject| node_data[:node_name].to_s == type}
+          if working_subjects.length > 0
+            xml.controlaccess { 
+              xml.head { xml.text subject_types[type] }
+              working_subjects.each do |node_data, subject|
+                xml.send(node_data[:node_name], node_data[:atts]) {
+                  sanitize_mixed_content( node_data[:content], xml, fragments, ASpaceExport::Utils.include_p?(node_data[:node_name]) )
+                  EADSerializer.run_serialize_step(subject['_resolved'], xml, fragments, node_data[:node_name].to_sym)
+                }
+              end
+            }
+          end
           }
         end
-        data.controlaccess_subjects.zip(data.subjects).each do |node_data, subject|
-          xml.send(node_data[:node_name], node_data[:atts]) {
-            sanitize_mixed_content( node_data[:content], xml, fragments, ASpaceExport::Utils.include_p?(node_data[:node_name]) )
-            EADSerializer.run_serialize_step(subject['_resolved'], xml, fragments, node_data[:node_name].to_sym)
-          }
-        end
+      end
       } #</controlaccess>
     end
   end
