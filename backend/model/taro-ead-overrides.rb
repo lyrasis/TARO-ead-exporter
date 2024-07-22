@@ -14,7 +14,7 @@ class EADSerializer < ASpaceExport::Serializer
 
       ead_attributes = {
         'xmlns:xsi' => 'http://www.w3.org/2001/XMLSchema-instance',
-        'xsi:schemaLocation' => 'urn:isbn:1-931666-22-9 http://www.loc.gov/ead/ead.xsd',
+        'xsi:schemaLocation' => 'urn:isbn:1-931666-22-9 https://www.loc.gov/ead/ead.xsd',
         'xmlns:xlink' => 'http://www.w3.org/1999/xlink'
       }
 
@@ -42,7 +42,8 @@ class EADSerializer < ASpaceExport::Serializer
               xml.repository ( { 'encodinganalog' => '852$a' } ) {
                 xml.corpname { sanitize_mixed_content(val, xml, @fragments) }
                 if data.repo.url
-                  xml.extptr ( {
+                  xml.extref ( {
+													 "xmlns:xlink" => "http://www.w3.org/1999/xlink",
                            "xlink:href" => data.repo.url,
                            "xlink:type" => "simple",
                            "xlink:show" => "new",
@@ -61,7 +62,8 @@ class EADSerializer < ASpaceExport::Serializer
             unitid_atts = {:countrycode => data.repo.country,
               :repositorycode => data.mainagencycode,
               :encodinganalog => '099'}.reject {|k, v| v.nil? || v.empty? || v == "null" }
-            xml.unitid(unitid_atts) { (0..3).map{|i| data.send("id_#{i}")}.compact.join('.') }
+            unitid = (0..3).map {|i| data.send("id_#{i}")}.compact.join('.')
+            xml.unitid(unitid_atts) { xml.text unitid }
 
 #            if @include_unpublished
 #              data.external_ids.each do |exid|
@@ -131,6 +133,87 @@ class EADSerializer < ASpaceExport::Serializer
     end
   end
 
+  def serialize_aspace_uri(data, xml)
+		#We don't want these
+    #xml.unitid ({ 'type' => 'aspace_uri' }) { xml.text data.uri }
+  end
+
+	def serialize_child(data, xml, fragments, c_depth = 1)
+    return if data["publish"] === false && !@include_unpublished
+    return if data["suppressed"] === true
+
+    tag_name = @use_numbered_c_tags ? :"c#{c_depth.to_s.rjust(2, '0')}" : :c
+
+    atts = {:level => data.level, :otherlevel => data.other_level, :id => prefix_id(data.ref_id)}
+
+    if data.publish === false
+      atts[:audience] = 'internal'
+    end
+
+    atts.reject! {|k, v| v.nil?}
+    xml.send(tag_name, atts) {
+
+      xml.did {
+        if (val = data.title)
+          xml.unittitle { sanitize_mixed_content( val, xml, fragments) }
+        end
+
+        if !data.component_id.nil? && !data.component_id.empty?
+          xml.unitid data.component_id
+        end
+
+        handle_arks(data, xml)
+
+        serialize_aspace_uri(data, xml)
+
+        if @include_unpublished
+          data.external_ids.each do |exid|
+            xml.unitid ({ "audience" => "internal", "type" => exid['source'], "identifier" => exid['external_id']}) { xml.text exid['external_id']}
+          end
+        end
+
+        serialize_origination(data, xml, fragments)
+        serialize_extents(data, xml, fragments)
+        serialize_dates(data, xml, fragments)
+        serialize_did_notes(data, xml, fragments)
+
+        if (languages = data.lang_materials)
+          serialize_languages(languages, xml, fragments)
+        end
+
+        EADSerializer.run_serialize_step(data, xml, fragments, :did)
+
+        data.instances_with_sub_containers.each do |instance|
+          serialize_container(instance, xml, @fragments)
+        end
+
+        if @include_daos
+          data.instances_with_digital_objects.each do |instance|
+            serialize_digital_object(instance['digital_object']['_resolved'], xml, fragments)
+          end
+        end
+      }
+
+      serialize_nondid_notes(data, xml, fragments)
+
+      serialize_bibliographies(data, xml, fragments)
+
+      serialize_indexes(data, xml, fragments)
+
+      serialize_children_controlaccess(data, xml, fragments)
+
+      EADSerializer.run_serialize_step(data, xml, fragments, :archdesc)
+
+      data.children_indexes.each do |i|
+        xml.text(
+          @stream_handler.buffer {|xml, new_fragments|
+            serialize_child(data.get_child(i), xml, new_fragments, c_depth + 1)
+          }
+        )
+      end
+    }
+  end
+
   def serialize_origination(data, xml, fragments)
     unless data.creators_and_sources.nil?
       used_names = []
@@ -162,10 +245,10 @@ class EADSerializer < ASpaceExport::Serializer
                     when 'agent_software'; '130'
                     end
 
-        origination_attrs = {:label => role, :encodinganalog => encodinganalog}
+        origination_attrs = {:label => role}
         origination_attrs[:audience] = 'internal' unless published
         xml.origination(origination_attrs) {
-          atts = {:role => relator, :source => source, :rules => rules, :authfilenumber => authfilenumber}
+          atts = {:role => relator, :source => source, :rules => rules, :authfilenumber => authfilenumber, :encodinganalog => encodinganalog}
           atts.reject! {|k, v| v.nil?}
 
           xml.send(node_name, atts) {
@@ -195,7 +278,8 @@ class EADSerializer < ASpaceExport::Serializer
               end
             }
           end
-        }
+        	}
+				end
         if data.controlaccess_subjects.length > 0
           subject_types = {"subject" => "Subjects", 
                           "geogname" => "Places", 
@@ -213,15 +297,51 @@ class EADSerializer < ASpaceExport::Serializer
                   EADSerializer.run_serialize_step(subject['_resolved'], xml, fragments, node_data[:node_name].to_sym)
                 }
               end
-            }
-          end
-          }
-        end
-      end
+              }
+          	end
+          	}
+					end
       } #</controlaccess>
     end
   end
 
+  def serialize_children_controlaccess(data, xml, fragments)
+    if (data.controlaccess_subjects.length + data.controlaccess_linked_agents(@include_unpublished).reject {|x| x.empty?}.length) > 0
+      xml.controlaccess {
+        if data.controlaccess_linked_agents(@include_unpublished).reject {|x| x.empty?}.length > 0
+          agent_types = {"persname" => "Subjects (Persons)", "corpname" => "Subjects (Organizations)", "famname" => "Subjects (Families)"}
+          agent_types.keys.each { |type| working_agents = data.controlaccess_linked_agents(@include_unpublished).zip(data.linked_agents).select{|node_data, agent| node_data[:node_name].to_s == type}
+          if working_agents.length > 0
+              working_agents.each do |node_data, agent|
+                xml.send(node_data[:node_name], node_data[:atts]) {
+                  sanitize_mixed_content( node_data[:content], xml, fragments, ASpaceExport::Utils.include_p?(node_data[:node_name]) )
+                  EADSerializer.run_serialize_step(agent['_resolved'], xml, fragments, node_data[:node_name].to_sym)
+                }
+              end
+          end
+        	}
+				end
+        if data.controlaccess_subjects.length > 0
+          subject_types = {"subject" => "Subjects", 
+                          "geogname" => "Places", 
+                          "genreform" => "Document Types",
+                          "occupation" => "Occupations",
+                          "function" => "Functions", 
+                          "title" => "Uniform Titles"}
+          subject_types.keys.each {|type| working_subjects = data.controlaccess_subjects.zip(data.subjects).select{ |node_data, subject| node_data[:node_name].to_s == type}
+          if working_subjects.length > 0
+              working_subjects.each do |node_data, subject|
+                xml.send(node_data[:node_name], node_data[:atts]) {
+                  sanitize_mixed_content( node_data[:content], xml, fragments, ASpaceExport::Utils.include_p?(node_data[:node_name]) )
+                  EADSerializer.run_serialize_step(subject['_resolved'], xml, fragments, node_data[:node_name].to_sym)
+                }
+              end
+          	end
+          	}
+					end
+      } #</controlaccess>
+    end
+  end
   def serialize_digital_object(digital_object, xml, fragments)
     return if digital_object["publish"] === false && !@include_unpublished
     return if digital_object["suppressed"] === true
@@ -333,7 +453,13 @@ class EADSerializer < ASpaceExport::Serializer
             sanitize_mixed_content( content, xml, fragments, ASpaceExport::Utils.include_p?(note['type']) )
           }
         }
-      when 'physdesc', 'abstract', 'physloc'
+      when 'abstract'
+        att[:label] = note['label'] if note['label']
+        att[:encodinganalog] = '520$a'
+        xml.send(note['type'], att.merge(audatt)) {
+          sanitize_mixed_content(content, xml, fragments, ASpaceExport::Utils.include_p?(note['type']))
+        }
+      when 'physdesc', 'physloc'
         att[:label] = note['label'] if note['label']
         xml.send(note['type'], att.merge(audatt)) {
           sanitize_mixed_content(content, xml, fragments, ASpaceExport::Utils.include_p?(note['type']))
@@ -413,8 +539,7 @@ class EADSerializer < ASpaceExport::Serializer
     audatt = note["publish"] === false ? {:audience => 'internal'} : {}
     content = note["content"]
     encodinganalogs =
-      { "abstract" => "520$a",
-        "accessrestrict" => "506",
+      { "accessrestrict" => "506",
         "acqinfo" => "541",
         "altformavail" => "530",
         "bioghist" => "545",
@@ -478,7 +603,7 @@ class EADSerializer < ASpaceExport::Serializer
           titleproper = ""
           titleproper += "#{data.finding_aid_title} " if data.finding_aid_title
           titleproper += "#{data.title}" if ( data.title && titleproper.empty? )
-          titleproper += "<num>#{(0..3).map {|i| data.send("id_#{i}")}.compact.join('.')}</num>"
+          #titleproper += "<num>#{(0..3).map {|i| data.send("id_#{i}")}.compact.join('.')}</num>"
           xml.titleproper("type" => "filing") { sanitize_mixed_content(data.finding_aid_filing_title, xml, fragments)} unless data.finding_aid_filing_title.nil?
           xml.titleproper { sanitize_mixed_content(titleproper, xml, fragments) }
           xml.subtitle {  sanitize_mixed_content(data.finding_aid_subtitle, xml, fragments) } unless data.finding_aid_subtitle.nil?
