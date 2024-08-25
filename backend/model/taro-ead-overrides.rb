@@ -216,18 +216,16 @@ class EADSerializer < ASpaceExport::Serializer
 
   def serialize_origination(data, xml, fragments)
     unless data.creators_and_sources.nil?
-      used_names = []
       data.creators_and_sources.each do |link|
         agent = link['_resolved']
         published = agent['publish'] === true
 
         next if !published && !@include_unpublished
 
+        sort_name = agent['display_name']['sort_name']
         link['role'] == 'creator' ? role = link['role'].capitalize : role = link['role']
         relator = link['relator']
-        sort_name = agent['display_name']['sort_name']
-        next if used_names.include?(sort_name)
-        used_names.push(sort_name)
+        next if link['role'] == 'source'
         rules = agent['display_name']['rules']
         source = agent['display_name']['source']
         authfilenumber = agent['display_name']['authority_id']
