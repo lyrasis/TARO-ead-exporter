@@ -58,7 +58,7 @@ class EADSerializer < ASpaceExport::Serializer
             end
 
             
-            unless data.creators_and_sources.nil?
+            unless data.creators_and_sources.blank?
               xml.origination( { 'label' => 'Creator' } ) {
                 serialize_origination(data, xml, @fragments)
               }
@@ -177,7 +177,11 @@ class EADSerializer < ASpaceExport::Serializer
           end
         end
 
-        serialize_origination(data, xml, fragments)
+        unless data.creators_and_sources.blank?
+          xml.origination( { 'label' => 'Creator' } ) {
+            serialize_origination(data, xml, @fragments)
+            }
+        end
         serialize_extents(data, xml, fragments)
         serialize_dates(data, xml, fragments)
         serialize_did_notes(data, xml, fragments)
