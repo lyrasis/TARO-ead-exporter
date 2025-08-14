@@ -57,7 +57,12 @@ class EADSerializer < ASpaceExport::Serializer
               xml.unittitle ( { 'encodinganalog' => '245$a' } ) {   sanitize_mixed_content(val, xml, @fragments) }
             end
 
-            serialize_origination(data, xml, @fragments)
+            
+            unless data.creators_and_sources.blank?
+              xml.origination( { 'label' => 'Creator' } ) {
+                serialize_origination(data, xml, @fragments)
+              }
+            end
 
             unitid_atts = {:countrycode => data.repo.country,
               :repositorycode => data.mainagencycode,
@@ -172,7 +177,11 @@ class EADSerializer < ASpaceExport::Serializer
           end
         end
 
-        serialize_origination(data, xml, fragments)
+        unless data.creators_and_sources.blank?
+          xml.origination( { 'label' => 'Creator' } ) {
+            serialize_origination(data, xml, @fragments)
+            }
+        end
         serialize_extents(data, xml, fragments)
         serialize_dates(data, xml, fragments)
         serialize_did_notes(data, xml, fragments)
@@ -216,6 +225,9 @@ class EADSerializer < ASpaceExport::Serializer
 
   def serialize_origination(data, xml, fragments)
     unless data.creators_and_sources.nil?
+      #origination_attrs = {:label => role}
+      #origination_attrs[:audience] = 'internal' unless published
+      #xml.origination {
       data.creators_and_sources.each do |link|
         agent = link['_resolved']
         published = agent['publish'] === true
@@ -243,9 +255,6 @@ class EADSerializer < ASpaceExport::Serializer
                     when 'agent_software'; '130'
                     end
 
-        origination_attrs = {:label => role}
-        origination_attrs[:audience] = 'internal' unless published
-        xml.origination(origination_attrs) {
           atts = {:role => relator, :source => source, :rules => rules, :authfilenumber => authfilenumber, :encodinganalog => encodinganalog}
           atts.reject! {|k, v| v.nil?}
 
@@ -253,8 +262,8 @@ class EADSerializer < ASpaceExport::Serializer
             sanitize_mixed_content(sort_name, xml, fragments )
             EADSerializer.run_serialize_step(agent, xml, fragments, node_name.to_sym)
           }
-        }
-      end
+        end
+      #}
     end
   end
 
